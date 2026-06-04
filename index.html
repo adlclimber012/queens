@@ -22,12 +22,12 @@
   #spinner{display:flex;flex-direction:column;align-items:center;gap:12px;color:#888;font-size:13px}
   .ring{width:34px;height:34px;border:3px solid #ddd;border-top-color:#666;border-radius:50%;animation:spin .8s linear infinite}
   @keyframes spin{to{transform:rotate(360deg)}}
-  #grid{display:none;border:2px solid #444;border-radius:6px;overflow:hidden;user-select:none;touch-action:manipulation}
-  .cell{display:flex;align-items:center;justify-content:center;cursor:pointer;border:0.5px solid rgba(0,0,0,0.13);transition:filter .1s;-webkit-tap-highlight-color:transparent}
+  #grid{display:none;border:2px solid #222;border-radius:6px;overflow:hidden;user-select:none;touch-action:manipulation}
+  .cell{display:flex;align-items:center;justify-content:center;cursor:pointer;-webkit-tap-highlight-color:transparent;position:relative}
   .cell:active{filter:brightness(0.88)}
-  .cell.error{outline:3px solid #e24b4a;outline-offset:-3px;z-index:1}
-  .cell.crown::after{content:'♛';color:#1a1a1a;line-height:1}
-  .cell.mark::after{content:'✕';color:rgba(0,0,0,0.38);font-weight:700;line-height:1}
+  .cell.error{outline:3px solid #e24b4a;outline-offset:-3px;z-index:2}
+  .cell.crown::after{content:'♛';color:#1a1a1a;line-height:1;position:relative;z-index:1}
+  .cell.mark::after{content:'✕';color:rgba(0,0,0,0.38);font-weight:700;line-height:1;position:relative;z-index:1}
   #win-banner{display:none;text-align:center;padding:.9rem;background:#d4e6a5;border-radius:10px;font-size:16px;font-weight:600;color:#3b6d11;margin-bottom:.75rem}
   #instructions{background:#fff;border-radius:10px;padding:.9rem 1.1rem;margin-top:.75rem;font-size:13px;color:#555;line-height:1.65;border:1px solid #e0e0e0}
   #instructions strong{color:#1a1a1a;font-weight:600}
@@ -68,236 +68,205 @@
   </div>
 </div>
 <script>
-// ── Palettes: maximally distinct colors, chosen for mobile legibility ────────
-// 9 colors — far enough apart in hue/lightness to be distinguishable even in
-// similar-looking adjacent regions. Avoided near-identical greens, blues, purples.
 const PALETTE = [
-  '#F28B82', // red-coral
-  '#FAD199', // warm amber
-  '#AECBFA', // sky blue
-  '#D7AEFB', // lavender
-  '#A8D5A2', // sage green
-  '#FF8C69', // salmon-orange
-  '#81D4E8', // teal-cyan
-  '#F6C0E0', // rose pink
-  '#B5EAD7', // mint
+  '#F28B82','#FAD199','#AECBFA','#D7AEFB',
+  '#A8D5A2','#FF8C69','#81D4E8','#F6C0E0','#B5EAD7'
 ];
-// Each size picks the first N colors from the palette
 const DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
 let N = 8, regions = [], cells = [], genId = 0;
 
-function shuffle(a) {
-  const b = [...a];
-  for (let i = b.length-1; i > 0; i--) {
-    const j = 0|Math.random()*(i+1); [b[i],b[j]]=[b[j],b[i]];
-  }
+function shuffle(a){
+  const b=[...a];
+  for(let i=b.length-1;i>0;i--){const j=0|Math.random()*(i+1);[b[i],b[j]]=[b[j],b[i]];}
   return b;
 }
 
-// ── Compute cell size to fit viewport ───────────────────────────────────────
-function computeCellSize(n) {
-  // Available width: viewport minus padding (2*16px) minus grid border (4px)
+function computeCellSize(n){
   const available = Math.min(window.innerWidth, 520) - 36;
-  const fromWidth = Math.floor(available / n);
-  // Also cap at a comfortable max
-  const max = n === 8 ? 56 : 50;
-  return Math.min(fromWidth, max);
+  return Math.min(Math.floor(available/n), n===8?56:50);
 }
 
-// ── Solution generator ───────────────────────────────────────────────────────
-function genSolution(n) {
-  for (let t = 0; t < 50000; t++) {
-    const cols = shuffle([...Array(n).keys()]);
-    let ok = true;
-    for (let i = 0; i < n && ok; i++)
-      for (let j = i+1; j < n && ok; j++)
-        if (Math.abs(i-j) <= 1 && Math.abs(cols[i]-cols[j]) <= 1) ok = false;
-    if (ok) return cols;
+// Region border logic:
+// For each edge of a cell, draw a thick border if the neighbor is a different region,
+// otherwise draw a hair-line inner grid line.
+const THICK = '1.5px solid #1a1a1a';
+const THIN  = '0.5px solid rgba(0,0,0,0.12)';
+
+function regionBorderStyle(r, c, n, rg) {
+  const top    = r === 0   || rg[r-1][c] !== rg[r][c] ? THICK : THIN;
+  const bottom = r === n-1 || rg[r+1][c] !== rg[r][c] ? THICK : THIN;
+  const left   = c === 0   || rg[r][c-1] !== rg[r][c] ? THICK : THIN;
+  const right  = c === n-1 || rg[r][c+1] !== rg[r][c] ? THICK : THIN;
+  return `border-top:${top};border-bottom:${bottom};border-left:${left};border-right:${right};`;
+}
+
+function genSolution(n){
+  for(let t=0;t<50000;t++){
+    const cols=shuffle([...Array(n).keys()]);
+    let ok=true;
+    for(let i=0;i<n&&ok;i++) for(let j=i+1;j<n&&ok;j++)
+      if(Math.abs(i-j)<=1&&Math.abs(cols[i]-cols[j])<=1) ok=false;
+    if(ok) return cols;
   }
   return null;
 }
 
-// ── Organic region builder ───────────────────────────────────────────────────
-function buildRegions(sol, n) {
-  const g = Array.from({length:n}, () => Array(n).fill(-1));
-  sol.forEach((c, r) => g[r][c] = r);
-
-  let rem = shuffle(
-    Array.from({length:n*n}, (_,i) => [0|i/n, i%n])
-      .filter(([r,c]) => g[r][c] === -1)
-  );
-
-  for (let pass = 0; pass < 40 && rem.length; pass++) {
-    const left = [];
-    for (const [r,c] of shuffle(rem)) {
-      const cands = [];
-      for (const [dr,dc] of DIRS) {
-        const nr=r+dr, nc=c+dc;
-        if (nr>=0&&nr<n&&nc>=0&&nc<n&&g[nr][nc]!==-1) {
-          const reg = g[nr][nc];
-          const dist = Math.abs(r-reg) + Math.abs(c-sol[reg]);
-          const cross = reg !== r ? 2 : 0;
-          cands.push({reg, w: dist + cross + Math.random()*2});
+function buildRegions(sol,n){
+  const g=Array.from({length:n},()=>Array(n).fill(-1));
+  sol.forEach((c,r)=>g[r][c]=r);
+  let rem=shuffle(Array.from({length:n*n},(_,i)=>[0|i/n,i%n]).filter(([r,c])=>g[r][c]===-1));
+  for(let pass=0;pass<40&&rem.length;pass++){
+    const left=[];
+    for(const[r,c]of shuffle(rem)){
+      const cands=[];
+      for(const[dr,dc]of DIRS){
+        const nr=r+dr,nc=c+dc;
+        if(nr>=0&&nr<n&&nc>=0&&nc<n&&g[nr][nc]!==-1){
+          const reg=g[nr][nc];
+          const dist=Math.abs(r-reg)+Math.abs(c-sol[reg]);
+          const cross=reg!==r?2:0;
+          cands.push({reg,w:dist+cross+Math.random()*2});
         }
       }
-      if (!cands.length) { left.push([r,c]); continue; }
-      cands.sort((a,b) => b.w - a.w);
-      g[r][c] = cands[0].reg;
+      if(!cands.length){left.push([r,c]);continue;}
+      cands.sort((a,b)=>b.w-a.w);
+      g[r][c]=cands[0].reg;
     }
-    rem = left;
+    rem=left;
   }
-
-  if (rem.length) return null;
-  for (let reg = 0; reg < n; reg++) {
-    const cs = [];
-    for (let r=0;r<n;r++) for (let c=0;c<n;c++) if (g[r][c]===reg) cs.push([r,c]);
-    if (!cs.length) return null;
-    const vis = new Set([cs[0].join()]); const q = [cs[0]];
-    while (q.length) {
-      const [cr,cc] = q.shift();
-      for (const [dr,dc] of DIRS) {
-        const nr=cr+dr, nc=cc+dc, k=`${nr},${nc}`;
-        if (nr>=0&&nr<n&&nc>=0&&nc<n&&g[nr][nc]===reg&&!vis.has(k)) { vis.add(k); q.push([nr,nc]); }
+  if(rem.length) return null;
+  for(let reg=0;reg<n;reg++){
+    const cs=[];for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(g[r][c]===reg)cs.push([r,c]);
+    if(!cs.length) return null;
+    const vis=new Set([cs[0].join()]);const q=[cs[0]];
+    while(q.length){
+      const[cr,cc]=q.shift();
+      for(const[dr,dc]of DIRS){
+        const nr=cr+dr,nc=cc+dc,k=`${nr},${nc}`;
+        if(nr>=0&&nr<n&&nc>=0&&nc<n&&g[nr][nc]===reg&&!vis.has(k)){vis.add(k);q.push([nr,nc]);}
       }
     }
-    if (vis.size !== cs.length) return null;
+    if(vis.size!==cs.length) return null;
   }
   return g;
 }
 
-// ── Backtracking solver (stops at 2) ────────────────────────────────────────
-function countSolutions(rg, n) {
-  let count = 0;
-  const placed = new Int8Array(n).fill(-1);
-  const usedC  = new Uint8Array(n);
-  const usedR  = new Uint8Array(n);
-  const flat   = new Uint8Array(n*n);
-  for (let r=0;r<n;r++) for (let c=0;c<n;c++) flat[r*n+c] = rg[r][c];
-  function bt(row) {
-    if (count >= 2) return;
-    if (row === n) { count++; return; }
-    const prev = row > 0 ? placed[row-1] : -99;
-    for (let c = 0; c < n; c++) {
-      if (usedC[c] || usedR[flat[row*n+c]]) continue;
-      if (Math.abs(prev-c) <= 1) continue;
-      placed[row]=c; usedC[c]=1; usedR[flat[row*n+c]]=1;
+function countSolutions(rg,n){
+  let count=0;
+  const placed=new Int8Array(n).fill(-1),usedC=new Uint8Array(n),usedR=new Uint8Array(n);
+  const flat=new Uint8Array(n*n);
+  for(let r=0;r<n;r++)for(let c=0;c<n;c++)flat[r*n+c]=rg[r][c];
+  function bt(row){
+    if(count>=2)return;
+    if(row===n){count++;return;}
+    const prev=row>0?placed[row-1]:-99;
+    for(let c=0;c<n;c++){
+      if(usedC[c]||usedR[flat[row*n+c]])continue;
+      if(Math.abs(prev-c)<=1)continue;
+      placed[row]=c;usedC[c]=1;usedR[flat[row*n+c]]=1;
       bt(row+1);
-      placed[row]=-1; usedC[c]=0; usedR[flat[row*n+c]]=0;
+      placed[row]=-1;usedC[c]=0;usedR[flat[row*n+c]]=0;
     }
   }
-  bt(0);
-  return count;
+  bt(0);return count;
 }
 
-// ── Async generation ─────────────────────────────────────────────────────────
-function tryBatch(n, batchSize) {
-  for (let i = 0; i < batchSize; i++) {
-    const sol = genSolution(n); if (!sol) continue;
-    const rg  = buildRegions(sol, n); if (!rg) continue;
-    if (countSolutions(rg, n) === 1) return rg;
+function tryBatch(n,batchSize){
+  for(let i=0;i<batchSize;i++){
+    const sol=genSolution(n);if(!sol)continue;
+    const rg=buildRegions(sol,n);if(!rg)continue;
+    if(countSolutions(rg,n)===1)return rg;
   }
   return null;
 }
 
-function showSpinner(on) {
-  document.getElementById('spinner').style.display = on ? 'flex' : 'none';
-  document.getElementById('grid').style.display    = on ? 'none' : 'grid';
-  document.getElementById('btn-new').disabled   = on;
-  document.getElementById('btn-reset').disabled = on;
+function showSpinner(on){
+  document.getElementById('spinner').style.display=on?'flex':'none';
+  document.getElementById('grid').style.display=on?'none':'grid';
+  document.getElementById('btn-new').disabled=on;
+  document.getElementById('btn-reset').disabled=on;
 }
 
-function newPuzzle() {
-  document.getElementById('win-banner').style.display = 'none';
+function newPuzzle(){
+  document.getElementById('win-banner').style.display='none';
   showSpinner(true);
-  const id = ++genId;
-  function attempt() {
-    if (genId !== id) return;
-    const regs = tryBatch(N, 40);
-    if (regs) {
-      regions = regs;
-      cells = Array.from({length:N}, () => Array(N).fill(0));
+  const id=++genId;
+  function attempt(){
+    if(genId!==id)return;
+    const regs=tryBatch(N,40);
+    if(regs){
+      regions=regs;
+      cells=Array.from({length:N},()=>Array(N).fill(0));
       showSpinner(false);
       renderGrid();
     } else {
-      setTimeout(attempt, 0);
+      setTimeout(attempt,0);
     }
   }
-  setTimeout(attempt, 40);
+  setTimeout(attempt,40);
 }
 
-function resetBoard() {
-  document.getElementById('win-banner').style.display = 'none';
-  cells = Array.from({length:N}, () => Array(N).fill(0));
+function resetBoard(){
+  document.getElementById('win-banner').style.display='none';
+  cells=Array.from({length:N},()=>Array(N).fill(0));
   renderGrid();
 }
 
-function setSize(n, btn) {
-  document.querySelectorAll('.size-btn').forEach(b => b.classList.remove('active'));
+function setSize(n,btn){
+  document.querySelectorAll('.size-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
-  N = n; newPuzzle();
+  N=n;newPuzzle();
 }
 
-// ── Rendering ────────────────────────────────────────────────────────────────
-function renderGrid() {
-  const sz = computeCellSize(N);
-  const g  = document.getElementById('grid');
-  g.style.gridTemplateColumns = `repeat(${N}, ${sz}px)`;
-  g.innerHTML = '';
-  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
-    const el = document.createElement('div');
-    const s  = cells[r][c];
-    el.className = 'cell' + (s===1?' mark':s===2?' crown':'');
-    el.style.cssText =
-      `width:${sz}px;height:${sz}px;` +
-      `background:${PALETTE[regions[r][c]]};` +
-      `font-size:${Math.round(sz*0.46)}px`;
-    el.dataset.r = r; el.dataset.c = c;
-    el.onclick = () => { cells[r][c] = (cells[r][c]+1)%3; renderGrid(); checkWin(); };
+function renderGrid(){
+  const sz=computeCellSize(N);
+  const g=document.getElementById('grid');
+  g.style.gridTemplateColumns=`repeat(${N},${sz}px)`;
+  g.innerHTML='';
+  for(let r=0;r<N;r++) for(let c=0;c<N;c++){
+    const el=document.createElement('div');
+    const s=cells[r][c];
+    el.className='cell'+(s===1?' mark':s===2?' crown':'');
+    el.style.cssText=
+      `width:${sz}px;height:${sz}px;`+
+      `background:${PALETTE[regions[r][c]]};`+
+      `font-size:${Math.round(sz*0.46)}px;`+
+      regionBorderStyle(r,c,N,regions);
+    el.dataset.r=r;el.dataset.c=c;
+    el.onclick=()=>{cells[r][c]=(cells[r][c]+1)%3;renderGrid();checkWin();};
     g.appendChild(el);
   }
   highlightErrors();
 }
 
-// Re-render on resize (orientation change etc.)
-window.addEventListener('resize', () => {
-  if (regions.length) renderGrid();
-});
+window.addEventListener('resize',()=>{ if(regions.length) renderGrid(); });
 
-// ── Error detection ──────────────────────────────────────────────────────────
-function getErrors() {
-  const e = new Set();
-  const cr = (r,c) => cells[r][c] === 2;
-  for (let r=0;r<N;r++) {
-    const row=[]; for(let c=0;c<N;c++) if(cr(r,c)) row.push([r,c]);
-    if(row.length>1) row.forEach(([a,b])=>e.add(`${a},${b}`));
-  }
-  for (let c=0;c<N;c++) {
-    const col=[]; for(let r=0;r<N;r++) if(cr(r,c)) col.push([r,c]);
-    if(col.length>1) col.forEach(([a,b])=>e.add(`${a},${b}`));
-  }
+function getErrors(){
+  const e=new Set();
+  const cr=(r,c)=>cells[r][c]===2;
+  for(let r=0;r<N;r++){const row=[];for(let c=0;c<N;c++)if(cr(r,c))row.push([r,c]);if(row.length>1)row.forEach(([a,b])=>e.add(`${a},${b}`));}
+  for(let c=0;c<N;c++){const col=[];for(let r=0;r<N;r++)if(cr(r,c))col.push([r,c]);if(col.length>1)col.forEach(([a,b])=>e.add(`${a},${b}`));}
   const rc={};
-  for(let r=0;r<N;r++) for(let c=0;c<N;c++) if(cr(r,c)) {
-    const rg=regions[r][c]; if(!rc[rg]) rc[rg]=[]; rc[rg].push([r,c]);
-  }
-  Object.values(rc).forEach(a=>{ if(a.length>1) a.forEach(([a,b])=>e.add(`${a},${b}`)); });
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(cr(r,c)){const rg=regions[r][c];if(!rc[rg])rc[rg]=[];rc[rg].push([r,c]);}
+  Object.values(rc).forEach(a=>{if(a.length>1)a.forEach(([a,b])=>e.add(`${a},${b}`));});
   const all=[];
-  for(let r=0;r<N;r++) for(let c=0;c<N;c++) if(cr(r,c)) all.push([r,c]);
-  for(let i=0;i<all.length;i++) for(let j=i+1;j<all.length;j++) {
-    const [r1,c1]=all[i],[r2,c2]=all[j];
-    if(Math.abs(r1-r2)<=1&&Math.abs(c1-c2)<=1) { e.add(`${r1},${c1}`); e.add(`${r2},${c2}`); }
+  for(let r=0;r<N;r++)for(let c=0;c<N;c++)if(cr(r,c))all.push([r,c]);
+  for(let i=0;i<all.length;i++)for(let j=i+1;j<all.length;j++){
+    const[r1,c1]=all[i],[r2,c2]=all[j];
+    if(Math.abs(r1-r2)<=1&&Math.abs(c1-c2)<=1){e.add(`${r1},${c1}`);e.add(`${r2},${c2}`);}
   }
   return e;
 }
 
-function highlightErrors() {
-  const e = getErrors();
-  document.querySelectorAll('.cell').forEach(el =>
-    el.classList.toggle('error', e.has(`${el.dataset.r},${el.dataset.c}`)));
+function highlightErrors(){
+  const e=getErrors();
+  document.querySelectorAll('.cell').forEach(el=>
+    el.classList.toggle('error',e.has(`${el.dataset.r},${el.dataset.c}`)));
 }
 
-function checkWin() {
-  if (cells.flat().filter(v=>v===2).length === N && getErrors().size === 0)
-    document.getElementById('win-banner').style.display = 'block';
+function checkWin(){
+  if(cells.flat().filter(v=>v===2).length===N&&getErrors().size===0)
+    document.getElementById('win-banner').style.display='block';
 }
 
 newPuzzle();
