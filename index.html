@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Queens">
 <title>Queens Puzzle</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
@@ -13,7 +16,7 @@
   #subtitle{font-size:12px;color:#666;margin-top:2px}
   #controls{display:flex;gap:8px;flex-shrink:0}
   button{cursor:pointer;font-size:13px;padding:6px 13px;border-radius:8px;border:1px solid #ccc;background:#fff;color:#1a1a1a;transition:background .15s;-webkit-tap-highlight-color:transparent}
-  button:hover{background:#f0f0f0}
+  @media (hover:hover){button:hover{background:#f0f0f0}}
   button:disabled{opacity:.45;cursor:default}
   #size-row{display:flex;gap:6px;justify-content:center;margin-bottom:0.75rem}
   .size-btn{font-size:12px;padding:5px 14px}
@@ -70,10 +73,21 @@
 <script>
 const PALETTE = [
   '#F28B82','#FAD199','#AECBFA','#D7AEFB',
-  '#A8D5A2','#FF8C69','#81D4E8','#F6C0E0','#B5EAD7'
+  '#A8D5A2','#C9C4BA','#81D4E8','#F6C0E0','#E6F08A'
 ];
+// Perceptual (CIELAB) distance between palette entries, used to keep touching regions far apart in color.
+const PAL_DIST = (()=>{
+  const lab=h=>{
+    const [r,g,b]=[1,3,5].map(i=>parseInt(h.slice(i,i+2),16)/255).map(v=>v<=0.04045?v/12.92:((v+0.055)/1.055)**2.4);
+    const f=t=>t>0.008856?Math.cbrt(t):7.787*t+16/116;
+    const x=f((r*0.4124+g*0.3576+b*0.1805)/0.95047),y=f(r*0.2126+g*0.7152+b*0.0722),z=f((r*0.0193+g*0.1192+b*0.9505)/1.08883);
+    return [116*y-16,500*(x-y),200*(y-z)];
+  };
+  const L=PALETTE.map(lab);
+  return L.map(a=>L.map(b=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])));
+})();
 const DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
-let N = 8, regions = [], cells = [], genId = 0;
+let N = 8, regions = [], cells = [], colors = [], genId = 0, generating = false, lastWidth = window.innerWidth;
 
 function shuffle(a){
   const b=[...a];
@@ -171,6 +185,25 @@ function countSolutions(rg,n){
   bt(0);return count;
 }
 
+// Assign a palette color to each region. Region ids equal the row of their hidden queen, so
+// colors must be randomized or the color order would give the answer away. On top of that,
+// search for a mapping that maximizes the smallest color distance between touching regions.
+function assignColors(rg,n){
+  const adj=[];
+  for(let r=0;r<n;r++)for(let c=0;c<n;c++){
+    if(r+1<n&&rg[r][c]!==rg[r+1][c])adj.push([rg[r][c],rg[r+1][c]]);
+    if(c+1<n&&rg[r][c]!==rg[r][c+1])adj.push([rg[r][c],rg[r][c+1]]);
+  }
+  const score=m=>{let lo=Infinity,sum=0;for(const[a,b]of adj){const d=PAL_DIST[m[a]][m[b]];if(d<lo)lo=d;sum+=d;}return lo*1000+sum/adj.length;};
+  let best=null,bestS=-1;
+  for(let t=0;t<200;t++){
+    const m=shuffle([...PALETTE.keys()]).slice(0,n);
+    const s=score(m);
+    if(s>bestS){bestS=s;best=m;}
+  }
+  return best.map(i=>PALETTE[i]);
+}
+
 function tryBatch(n,batchSize){
   for(let i=0;i<batchSize;i++){
     const sol=genSolution(n);if(!sol)continue;
@@ -185,6 +218,7 @@ function showSpinner(on){
   document.getElementById('grid').style.display=on?'none':'grid';
   document.getElementById('btn-new').disabled=on;
   document.getElementById('btn-reset').disabled=on;
+  generating=on;
 }
 
 function newPuzzle(){
@@ -196,6 +230,7 @@ function newPuzzle(){
     const regs=tryBatch(N,40);
     if(regs){
       regions=regs;
+      colors=assignColors(regs,N);
       cells=Array.from({length:N},()=>Array(N).fill(0));
       showSpinner(false);
       renderGrid();
@@ -207,6 +242,7 @@ function newPuzzle(){
 }
 
 function resetBoard(){
+  if(generating)return;
   document.getElementById('win-banner').style.display='none';
   cells=Array.from({length:N},()=>Array(N).fill(0));
   renderGrid();
@@ -229,17 +265,29 @@ function renderGrid(){
     el.className='cell'+(s===1?' mark':s===2?' crown':'');
     el.style.cssText=
       `width:${sz}px;height:${sz}px;`+
-      `background:${PALETTE[regions[r][c]]};`+
+      `background:${colors[regions[r][c]]};`+
       `font-size:${Math.round(sz*0.46)}px;`+
       regionBorderStyle(r,c,N,regions);
     el.dataset.r=r;el.dataset.c=c;
-    el.onclick=()=>{cells[r][c]=(cells[r][c]+1)%3;renderGrid();checkWin();};
+    el.onclick=()=>{
+      cells[r][c]=(cells[r][c]+1)%3;
+      const v=cells[r][c];
+      el.classList.toggle('mark',v===1);
+      el.classList.toggle('crown',v===2);
+      highlightErrors();checkWin();
+    };
     g.appendChild(el);
   }
   highlightErrors();
 }
 
-window.addEventListener('resize',()=>{ if(regions.length) renderGrid(); });
+// iOS Safari fires resize when the toolbar shows/hides while scrolling; only re-layout on a real
+// width change (e.g. rotation), and never while a new puzzle of a possibly different size is pending.
+window.addEventListener('resize',()=>{
+  if(window.innerWidth===lastWidth)return;
+  lastWidth=window.innerWidth;
+  if(!generating&&regions.length===N)renderGrid();
+});
 
 function getErrors(){
   const e=new Set();
@@ -265,8 +313,8 @@ function highlightErrors(){
 }
 
 function checkWin(){
-  if(cells.flat().filter(v=>v===2).length===N&&getErrors().size===0)
-    document.getElementById('win-banner').style.display='block';
+  const won=cells.flat().filter(v=>v===2).length===N&&getErrors().size===0;
+  document.getElementById('win-banner').style.display=won?'block':'none';
 }
 
 newPuzzle();
