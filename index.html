@@ -19,8 +19,9 @@
   @media (hover:hover){button:hover{background:#f0f0f0}}
   button:disabled{opacity:.45;cursor:default}
   #size-row{display:flex;gap:6px;justify-content:center;margin-bottom:0.75rem}
-  .size-btn{font-size:12px;padding:5px 14px}
+  .size-btn{font-size:12px;padding:5px 12px}
   .size-btn.active{background:#e8e8e8;border-color:#888;font-weight:600}
+  .row-gap{width:10px}
   #grid-wrap{display:flex;justify-content:center;align-items:center;min-height:280px;margin:0.5rem 0}
   #spinner{display:flex;flex-direction:column;align-items:center;gap:12px;color:#888;font-size:13px}
   .ring{width:34px;height:34px;border:3px solid #ddd;border-top-color:#666;border-radius:50%;animation:spin .8s linear infinite}
@@ -51,8 +52,12 @@
     </div>
   </div>
   <div id="size-row">
-    <button class="size-btn active" onclick="setSize(8,this)">8×8</button>
-    <button class="size-btn" onclick="setSize(9,this)">9×9</button>
+    <button class="size-btn sz-btn active" onclick="setSize(8,this)">8×8</button>
+    <button class="size-btn sz-btn" onclick="setSize(9,this)">9×9</button>
+    <span class="row-gap"></span>
+    <button class="size-btn diff-btn" onclick="setDiff('easy',this)">Easy</button>
+    <button class="size-btn diff-btn active" onclick="setDiff('medium',this)">Medium</button>
+    <button class="size-btn diff-btn" onclick="setDiff('hard',this)">Hard</button>
   </div>
   <div id="win-banner">🎉 Solved! Well done!</div>
   <div id="grid-wrap">
@@ -70,6 +75,7 @@
     </ul>
   </div>
 </div>
+<script src="puzzles.js"></script>
 <script>
 const PALETTE = [
   '#F28B82','#FAD199','#AECBFA','#D7AEFB',
@@ -87,7 +93,7 @@ const PAL_DIST = (()=>{
   return L.map(a=>L.map(b=>Math.hypot(a[0]-b[0],a[1]-b[1],a[2]-b[2])));
 })();
 const DIRS = [[-1,0],[1,0],[0,-1],[0,1]];
-let N = 8, regions = [], cells = [], colors = [], genId = 0, generating = false, lastWidth = window.innerWidth;
+let DIFF = 'medium', N = 8, regions = [], cells = [], colors = [], genId = 0, generating = false, lastWidth = window.innerWidth;
 
 function shuffle(a){
   const b=[...a];
@@ -221,8 +227,43 @@ function showSpinner(on){
   generating=on;
 }
 
+// Pre-designed boards from puzzles.js (built offline by tools/generate.js). Each pick gets a random
+// rotation/reflection, and recently played boards are skipped.
+function fromBank(n,d){
+  const list=window.QUEENS_BANK&&window.QUEENS_BANK[n]&&window.QUEENS_BANK[n][d];
+  if(!list||!list.length)return null;
+  const bucket=n+d;
+  let recent={};
+  try{recent=JSON.parse(localStorage.getItem('queens-recent')||'{}')||{};}catch(e){}
+  const seen=recent[bucket]||[];
+  let pool=list.map((_,k)=>k).filter(k=>!seen.includes(k));
+  if(!pool.length)pool=list.map((_,k)=>k);
+  const k=pool[0|Math.random()*pool.length];
+  recent[bucket]=[...seen.filter(x=>x!==k),k].slice(-Math.floor(list.length*0.75));
+  try{localStorage.setItem('queens-recent',JSON.stringify(recent));}catch(e){}
+  const src=list[k],t=0|Math.random()*8;
+  return Array.from({length:n},(_,r)=>Array.from({length:n},(_,c)=>{
+    let rr=r,cc=c;
+    if(t&1)[rr,cc]=[cc,rr];
+    if(t&2)rr=n-1-rr;
+    if(t&4)cc=n-1-cc;
+    return +src[rr*n+cc];
+  }));
+}
+
 function newPuzzle(){
   document.getElementById('win-banner').style.display='none';
+  const banked=fromBank(N,DIFF);
+  if(banked){
+    ++genId;
+    regions=banked;
+    colors=assignColors(banked,N);
+    cells=Array.from({length:N},()=>Array(N).fill(0));
+    showSpinner(false);
+    renderGrid();
+    return;
+  }
+  // Fallback: random generator (no difficulty control).
   showSpinner(true);
   const id=++genId;
   function attempt(){
@@ -248,8 +289,14 @@ function resetBoard(){
   renderGrid();
 }
 
+function setDiff(d,btn){
+  document.querySelectorAll('.diff-btn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+  DIFF=d;newPuzzle();
+}
+
 function setSize(n,btn){
-  document.querySelectorAll('.size-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelectorAll('.sz-btn').forEach(b=>b.classList.remove('active'));
   btn.classList.add('active');
   N=n;newPuzzle();
 }
